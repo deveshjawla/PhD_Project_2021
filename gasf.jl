@@ -30,8 +30,8 @@ References
 """
 
 function gramian_angular_field(input::Int32,
-    image_size::Int32 = 1,
-    sample_range::Tuple{Int32,Int32} = (-1,1),
+    image_size::Int32 = Int32(1),
+    sample_range::Tuple{Int32,Int32} = (-Int32(1),Int32(1)),
     method::Symbol = :Summation,
     flatten::Bool = false)
 
@@ -67,7 +67,7 @@ function split(x::Vector, n)
 	for i in 1:length(n)
 		if length(x) < n[i]
 			result[i] = []
-		elseif i==1
+		elseif i==Int32(1)
 			result[i] = x[1:n[i]]
 		else
 			result[i] = x[n[i-1]+1:n[i]]
@@ -79,7 +79,7 @@ end
 
 using StatsBase
 function paa(input_vector, output_size)
-	if length(input_vector)%output_size == 0
+	if length(input_vector)%output_size == Int32(0)
 		quotient_ = Int(length(input_vector)/output_size)
 		indices_list = [((i-1)*quotient_)+1:quotient_*i for i in 1:output_size]
 		output_vector = [mean(indices) for indices in indices_list]
@@ -96,16 +96,22 @@ function paa(input_vector, output_size)
     return output_vector, output_vector_magnitude
 end
 
-function X_cos_sin_tuple(X_paa, sample_range)
-	if sample_range === nothing
-        if (X_min < -1) || (X_max > 1)
-            error("If 'sample_range' is None, all the values of X must be between -1 and 1.")
-		end
-        X_cos = X_paa
-	else
-		X_cos = minmaxscaling(X_paa, sample_range)
+function X_cos_sin_tuple(X_paa, sample_range::Tuple{Int32,Int32})
+	
+	X_cos = minmaxscaling(X_paa, sample_range)
+	
+	X_sin = sqrt.(clamp.(Int32(1) .- X_cos.^2, Int32(0), Int32(1)))
+	return X_cos, X_sin
+end
+
+function X_cos_sin_tuple(X_paa, sample_range::Nothing)
+
+	if (X_min < -Int32(1)) || (X_max > Int32(1))
+		error("If 'sample_range' is None, all the values of X must be between -1 and 1.")
 	end
-	X_sin = sqrt.(clamp.(1 .- X_cos.^2, 0, 1))
+	X_cos = X_paa
+
+	X_sin = sqrt.(clamp.(Int32(1) .- X_cos.^2, Int32(0), Int32(1)))
 	return X_cos, X_sin
 end
 
