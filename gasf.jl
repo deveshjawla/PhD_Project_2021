@@ -1,4 +1,4 @@
-using Statistics
+ using Statistics
 
 """
 # Gramian Angular Field
@@ -9,7 +9,7 @@ Parameters
 image_size : int
     Shape of the output images.
 	 
-sample_range : None or tuple (min, max) (default = (-1, 1))
+sample_range : tuple (min, max) (default = (-1, 1))
     Desired range of transformed data. If None, no scaling is performed
     and all the values of the input data must be between -1 and 1.
     If tuple, each sample is scaled between min and max; min must be
@@ -28,40 +28,54 @@ References
        Inspection and Classification Using Tiled Convolutional Neural
        Networks." AAAI Workshop (2015)
 """
-function gramian_angular_field(input,
-    image_size = 1,
-    sample_range = (-1,1),
-    method = "summation",
-    flatten = false)
+
+function gramian_angular_field(input::Int32,
+    image_size::Int32 = 1,
+    sample_range::Tuple{Int32,Int32} = (-1,1),
+    method::Symbol = :Summation,
+    flatten::Bool = false)
 
 	_, X_paa = paa(input, image_size)
 	X_cos, X_sin = X_cos_sin_tuple(X_paa, sample_range)
 
-	if method == "summation"
+	if method === :Summation
 		output = X_cos*X_cos' - X_sin*X_sin'
-	elseif method == "difference"
+	elseif method === :Difference
 		output = X_sin*X_cos' - X_cos*X_sin'
+	else
+		error("Not a valid method")
 	end
-
-	if flatten == true
-		output = reshape(output,:)
-	end					
-    return output
+				
+    return flatten ? reshape(output,:) : output
 end
 
+# function split(x::Vector, n)
+#      result = Vector{Vector{eltype(x)}}()
+#      for i in 1:length(n)
+#          if length(x) < n[i]
+#              push!(result, [])
+#          elseif i==1
+#              push!(result, x[1:n[i]])
+#          else
+#              push!(result, x[n[i-1]+1:n[i]])
+#          end
+#      end
+#      result
+# end
 function split(x::Vector, n)
-     result = Vector{Vector{eltype(x)}}()
-     for i in 1:length(n)
-         if length(x) < n[i]
-             push!(result, [])
-         elseif i==1
-             push!(result, x[1:n[i]])
-         else
-             push!(result, x[n[i-1]+1:n[i]])
-         end
-     end
-     result
+	result = Vector{Vector{eltype(x)}}(undef,length(n))
+	for i in 1:length(n)
+		if length(x) < n[i]
+			result[i] = []
+		elseif i==1
+			result[i] = x[1:n[i]]
+		else
+			result[i] = x[n[i-1]+1:n[i]]
+		end
+	end
+	return result
 end
+
 
 using StatsBase
 function paa(input_vector, output_size)
