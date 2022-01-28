@@ -59,4 +59,4 @@ sigma = sqrt(1.0 / alpha);
 end
 
 Turing.setadbackend(:reversediff)
-chain = sample(bayesnn(Array(inputs'), labels), NUTS(200, 0.65), 100)
+chain = sample(bayesnn(Array(inputs'), labels), NUTS(200, 0.65), MCMCThreads(), 100)
