@@ -12,7 +12,7 @@ using Parameters: @with_kw
     indim::Int = 128
     outdim::Int = 128
     activation_fn = relu
-    bnmom::Union{Float32,Nothing} = 0.5
+    bnmom::Union{Float32,Nothing} = nothing
 end
 
 """
@@ -38,7 +38,7 @@ end
     pad::Int = 1
     pool_window::Tuple{Int,Int} = (2, 2)
     pool_stride::Int = 1
-    bnmom::Union{Float32,Nothing} = 0.5
+    bnmom::Union{Float32,Nothing} = nothing
 end
 
 """
@@ -64,7 +64,7 @@ end
 function conv_out_dims(input_dims::Tuple, cp::ConvParams)
     output_dims_conv = (((input_dims[1] - cp.filter_size[1] + 2 * cp.pad) / cp.stride_length) + 1)
     println(output_dims_conv)
-	output_dims = ((output_dims_conv - cp.pool_window[1]) / cp.pool_stride) + 1
+    output_dims = ((output_dims_conv - cp.pool_window[1]) / cp.pool_stride) + 1
     return (Int(output_dims), Int(output_dims))
 end
 
@@ -110,7 +110,7 @@ end
 
 
 ###
-### Network specifications
+### Conv Network specifications
 ###
 
 conv_layers = [ConvParams(), ConvParams(), ConvParams()]
@@ -122,31 +122,54 @@ dense_layers = [DenseParams(indim = prod([final_conv_out_dims..., conv_layers[en
 
 layers_spec = [conv_layers; dense_layers]
 
+function forward(xs, nn_params::AbstractVector, layers_spec)
+    c1, c2, c3, d1, d2 = unpack_params(nn_params, layers_spec)
+    nn = Chain([layer(i..., j) for (i, j) in zip([c1, c2, c3], layers_spec[1:3])]..., Flux.flatten, [layer(i..., j) for (i, j) in zip([d1, d2], layers_spec[4:5])]..., softmax)
+    return nn(xs)
+end
+
+###
+### Dense Network specifications
+###
+
+dense_layers = [DenseParams(indim = 590, outdim=4), DenseParams(indim=4, outdim=3), DenseParams(indim=3, outdim = 1, activation_fn = sigmoid)]
+
+function forward(xs, nn_params::AbstractVector, layers_spec)
+    d1, d2, d3 = unpack_params(nn_params, layers_spec)
+    nn = Chain([layer(i..., j) for (i, j) in zip([d1, d2, d3], layers_spec)]...)
+    return nn(xs)
+end
+
+### 
+### Data specifications
+### 
+
+using CSV, DataFrames, DelimitedFiles
+
+features = readdlm("Data/secom_data.txt")
+features = replace(features, NaN => 0)
+labels = Int.(readdlm("Data/secom_labels.txt")[:, 1])
+labels[labels.==-1] .= 0
+
 # Create a regularization term and a Gaussain prior variance term.
 alpha = 0.09
 sig = sqrt(1.0 / alpha)
 
-function bcnn_forward(xs, nn_params::AbstractVector, layers_spec)
-    c1, c2, c3, d1, d2 = unpack_params(nn_params, layers_spec)
-    nn = Chain([layer(i..., j) for (i, j) in zip([c1, c2, c3], layers_spec[1:3])]..., Flux.flatten, [layer(i..., j) for (i, j) in zip([d1, d2], layers_spec[4:5])]...)
-    return nn(xs)
-end
-
 # total_params = sum(num_params.(layers_spec))
-# bcnn_forward(rand(128, 128, 1, 4), rand(2001448), layers_spec)
+# forward(rand(128, 128, 1, 4), rand(2001448), layers_spec)
+
+using Turing
+using Turing.Variational
+Turing.setprogress!(true);
 
 # Specify the probabilistic model.
 @model function bayes_nn(xs, ys, layers_spec)
-
-    total_params = sum(num_params.(layers_spec))
-
+    total_num_params = sum(num_params.(layers_spec))
     # Create the weight and bias vector.
     nn_params ~ MvNormal(zeros(total_num_params), sig .* ones(total_num_params))
-
     # Calculate predictions for the inputs given the weights
     # and biases in theta.
-    preds = bcnn_forward(xs, nn_params, layers_spec)
-
+    preds = forward(xs, nn_params, layers_spec)
     # Observe each prediction.
     for i = 1:length(ys)
         ys[i] ~ Bernoulli(preds[i])
@@ -154,5 +177,22 @@ end
 end
 
 ###
-### Perform Inference
+### Perform Inference using VI
 ###
+
+m = bayes_nn(collect(features'), labels, dense_layers)
+q0 = Variational.meanfield(m)
+advi = ADVI(10, 100)
+opt = Variational.DecayedADAGrad(1e-2, 1.1, 0.9)
+q = vi(m, advi, q0; optimizer = opt)
+
+
+###
+### Perform Inference using MCMC
+###
+
+chain = sample(bayes_nn(collect(features'), labels, dense_layers), NUTS(), 10)
+# Extract all weight and bias parameters.
+theta = MCMCChains.group(chain, :nn_params).value
+
+#MCC metric to be used for imbalanced datasets
