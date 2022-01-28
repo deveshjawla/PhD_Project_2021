@@ -132,7 +132,7 @@ end
 ### Dense Network specifications
 ###
 
-dense_layers = [DenseParams(indim = 590, outdim=4), DenseParams(indim=4, outdim=3), DenseParams(indim=3, outdim = 1, activation_fn = sigmoid)]
+dense_layers = [DenseParams(indim = 376, outdim=4), DenseParams(indim=4, outdim=3), DenseParams(indim=3, outdim = 1, activation_fn = sigmoid)]
 
 function forward(xs, nn_params::AbstractVector, layers_spec)
     d1, d2, d3 = unpack_params(nn_params, layers_spec)
@@ -146,9 +146,9 @@ end
 
 using CSV, DataFrames, DelimitedFiles
 
-features = readdlm("Data/secom_data.txt")
-features = replace(features, NaN => 0)
-labels = Int.(readdlm("Data/secom_labels.txt")[:, 1])
+features = readdlm("Data/SECOM/nan_filtered_data.csv", ',' , Float32)
+# features = replace(features, NaN => 0)
+labels = Int.(readdlm("Data/SECOM/nan_filtered_labels.csv")[:, 1])
 labels[labels.==-1] .= 0
 
 # Create a regularization term and a Gaussain prior variance term.
