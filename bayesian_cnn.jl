@@ -13,6 +13,7 @@ using Parameters: @with_kw
     outdim::Int = 128
     activation_fn = relu
     bnmom::Union{Float32,Nothing} = nothing
+    bias::Bool = false
 end
 
 """
@@ -79,13 +80,18 @@ end
 function layer_params(params_vec::AbstractVector, cp::ConvParams)
     bias = [pop!(params_vec) for _ in 1:cp.out_channels]
     weight = reshape(params_vec, cp.filter_size..., cp.in_channels, cp.out_channels)
-    return weight, bias
+    return Float64.(weight), Float64.(bias)
 end
 
 function layer_params(params_vec::AbstractVector, dp::DenseParams)
-    bias = [pop!(params_vec) for _ in 1:dp.outdim]
+    if dp.bias == true
+        bias = [pop!(params_vec) for _ in 1:dp.outdim]
+    else
+        bias = [pop!(params_vec) for _ in 1:dp.outdim]
+        bias .*= 0.0
+    end
     weight = reshape(params_vec, dp.outdim, dp.indim)
-    return weight, bias
+    return Float64.(weight), Float64.(bias)
 end
 
 function split(x::AbstractVector, n)
@@ -132,7 +138,7 @@ end
 ### Dense Network specifications
 ###
 
-dense_layers = [DenseParams(indim = 376, outdim=4), DenseParams(indim=4, outdim=3), DenseParams(indim=3, outdim = 1, activation_fn = sigmoid)]
+dense_layers = [DenseParams(indim = 376, outdim = 4), DenseParams(indim = 4, outdim = 3), DenseParams(indim = 3, outdim = 1, activation_fn = sigmoid)]
 
 function forward(xs, nn_params::AbstractVector, layers_spec)
     d1, d2, d3 = unpack_params(nn_params, layers_spec)
@@ -146,32 +152,35 @@ end
 
 using CSV, DataFrames, DelimitedFiles
 
-features = readdlm("Data/SECOM/nan_filtered_data.csv", ',' , Float32)
+features = readdlm("Data/SECOM/nan_filtered_data.csv", ',', Float64)
 # features = replace(features, NaN => 0)
 labels = Int.(readdlm("Data/SECOM/nan_filtered_labels.csv")[:, 1])
 labels[labels.==-1] .= 0
+labels = Bool.(labels)
 
-# Create a regularization term and a Gaussain prior variance term.
-alpha = 0.09
-sig = sqrt(1.0 / alpha)
+total_params = sum(num_params.(dense_layers))
+d1, d2, d3 = unpack_params(randn(total_params), dense_layers)
+nn = Chain([layer(i..., j) for (i, j) in zip([d1, d2, d3], dense_layers)]...)
+forward(rand(376, 100), randn(total_params), dense_layers)
 
-# total_params = sum(num_params.(layers_spec))
-# forward(rand(128, 128, 1, 4), rand(2001448), layers_spec)
-
-using Turing
-using Turing.Variational
-Turing.setprogress!(true);
+using Turing#, DistributionsAD, AdvancedVI
 
 # Specify the probabilistic model.
 @model function bayes_nn(xs, ys, layers_spec)
     total_num_params = sum(num_params.(layers_spec))
+
+    # Create a regularization term and a Gaussain prior variance term.
+    alpha = 0.09
+    sig = sqrt(1.0 / alpha)
+
     # Create the weight and bias vector.
-    nn_params ~ MvNormal(zeros(total_num_params), sig .* ones(total_num_params))
+    nn_params ~ MvNormal(randn(total_num_params), sig .* ones(total_num_params))
     # Calculate predictions for the inputs given the weights
-    # and biases in theta.
+    # and biases in nn_params.
     preds = forward(xs, nn_params, layers_spec)
     # Observe each prediction.
     for i = 1:length(ys)
+        println(ys[i], preds[i])
         ys[i] ~ Bernoulli(preds[i])
     end
 end
@@ -180,19 +189,21 @@ end
 ### Perform Inference using VI
 ###
 
+using Turing.Variational
+
 m = bayes_nn(collect(features'), labels, dense_layers)
 q0 = Variational.meanfield(m)
 advi = ADVI(10, 100)
 opt = Variational.DecayedADAGrad(1e-2, 1.1, 0.9)
 q = vi(m, advi, q0; optimizer = opt)
-
+AdvancedVI.elbo(advi, q, m, 1000)
 
 ###
 ### Perform Inference using MCMC
 ###
 
-chain = sample(bayes_nn(collect(features'), labels, dense_layers), NUTS(), 10)
-# Extract all weight and bias parameters.
-theta = MCMCChains.group(chain, :nn_params).value
+# chain = sample(bayes_nn(collect(features'), labels, dense_layers), NUTS(), 10)
+# # Extract all weight and bias parameters.
+# theta = MCMCChains.group(chain, :nn_params).value
 
 #MCC metric to be used for imbalanced datasets

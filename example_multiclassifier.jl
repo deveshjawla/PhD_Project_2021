@@ -3,27 +3,14 @@ gr()
 
 iris = dataset("datasets", "iris");
 
-@df iris scatter(:SepalLength, :SepalWidth, group = :Species,
-    xlabel = "Length", ylabel = "Width", markersize = 5,
-    markeralpha = 0.75, markerstrokewidth = 0, linealpha = 0,
-    m = (0.5, [:cross :hex :star7], 12),
-    margin = 5mm)
+# @df iris scatter(:SepalLength, :SepalWidth, group = :Species,
+#     xlabel = "Length", ylabel = "Width", markersize = 5,
+#     markeralpha = 0.75, markerstrokewidth = 0, linealpha = 0,
+#     m = (0.5, [:cross :hex :star7], 12),
+#     margin = 5mm)
 
 inputs = Matrix(iris[:, 1:4])
 labels = map(x -> x == "setosa" ? 0 : x == "versicolor" ? 1 : 2, iris[:, end]);
-
-function softmax_(arr::AbstractArray)
-    ex = mapslices(x -> exp.(x), arr, dims = 1)
-    rows, cols = size(arr)
-    val = similar(ex)
-    for i in 1:cols
-        s = sum(ex[:, i])
-        for j in 1:rows
-            val[j, i] = ex[j, i] / s
-        end
-    end
-    return val
-end
 
 function weights(theta::AbstractVector)
     W0 = reshape(theta[1:20], 5, 4)
@@ -41,7 +28,7 @@ function feedforward(inp::AbstractArray, theta::AbstractVector)
         Dense(W0, b0, tanh),
         Dense(W1, b1, tanh),
         Dense(W2, b2, σ),
-        softmax_
+        softmax
     )
     return model(inp)
 end
@@ -51,12 +38,20 @@ sigma = sqrt(1.0 / alpha);
 
 @model bayesnn(inp, lab) = begin
     theta ~ MvNormal(zeros(63), sigma .* ones(63))
-
     preds = feedforward(inp, theta)
     for i = 1:length(lab)
         lab[i] ~ Categorical(preds[:, i])
     end
 end
 
-Turing.setadbackend(:reversediff)
-chain = sample(bayesnn(Array(inputs'), labels), NUTS(200, 0.65), MCMCThreads(), 100)
+# Turing.setadbackend(:reversediff)
+# chain = sample(bayesnn(Array(inputs'), labels), NUTS(), 100)
+
+using Turing.Variational
+m = bayesnn(Array(inputs'), labels)
+q0 = Variational.meanfield(m)
+advi = ADVI(10, 100)
+opt = Variational.DecayedADAGrad(1e-2, 1.1, 0.9)
+q = vi(m, advi, q0; optimizer = opt)
+using AdvancedVI
+AdvancedVI.elbo(advi, q, m, 1000)
