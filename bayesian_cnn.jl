@@ -80,7 +80,7 @@ end
 function layer_params(params_vec::AbstractVector, cp::ConvParams)
     bias = [pop!(params_vec) for _ in 1:cp.out_channels]
     weight = reshape(params_vec, cp.filter_size..., cp.in_channels, cp.out_channels)
-    return Float64.(weight), Float64.(bias)
+    return weight, bias
 end
 
 function layer_params(params_vec::AbstractVector, dp::DenseParams)
@@ -88,10 +88,10 @@ function layer_params(params_vec::AbstractVector, dp::DenseParams)
         bias = [pop!(params_vec) for _ in 1:dp.outdim]
     else
         bias = [pop!(params_vec) for _ in 1:dp.outdim]
-        bias .*= 0.0
+        # bias .*= 0.0
     end
     weight = reshape(params_vec, dp.outdim, dp.indim)
-    return Float64.(weight), Float64.(bias)
+    return weight, bias
 end
 
 function split(x::AbstractVector, n)
@@ -119,20 +119,20 @@ end
 ### Conv Network specifications
 ###
 
-conv_layers = [ConvParams(), ConvParams(), ConvParams()]
+# conv_layers = [ConvParams(), ConvParams(), ConvParams()]
 
-input_size = (128, 128)
-final_conv_out_dims = conv_out_dims(input_size, conv_layers[1]) |> x -> conv_out_dims(x, conv_layers[2]) |> x -> conv_out_dims(x, conv_layers[3])
+# input_size = (128, 128)
+# final_conv_out_dims = conv_out_dims(input_size, conv_layers[1]) |> x -> conv_out_dims(x, conv_layers[2]) |> x -> conv_out_dims(x, conv_layers[3])
 
-dense_layers = [DenseParams(indim = prod([final_conv_out_dims..., conv_layers[end].out_channels])), DenseParams(outdim = 10)]
+# dense_layers = [DenseParams(indim = prod([final_conv_out_dims..., conv_layers[end].out_channels])), DenseParams(outdim = 10)]
 
-layers_spec = [conv_layers; dense_layers]
+# layers_spec = [conv_layers; dense_layers]
 
-function forward(xs, nn_params::AbstractVector, layers_spec)
-    c1, c2, c3, d1, d2 = unpack_params(nn_params, layers_spec)
-    nn = Chain([layer(i..., j) for (i, j) in zip([c1, c2, c3], layers_spec[1:3])]..., Flux.flatten, [layer(i..., j) for (i, j) in zip([d1, d2], layers_spec[4:5])]..., softmax)
-    return nn(xs)
-end
+# function forward(xs, nn_params::AbstractVector, layers_spec)
+#     c1, c2, c3, d1, d2 = unpack_params(nn_params, layers_spec)
+#     nn = Chain([layer(i..., j) for (i, j) in zip([c1, c2, c3], layers_spec[1:3])]..., Flux.flatten, [layer(i..., j) for (i, j) in zip([d1, d2], layers_spec[4:5])]..., softmax)
+#     return nn(xs)
+# end
 
 ###
 ### Dense Network specifications
@@ -150,7 +150,7 @@ end
 ### Data specifications
 ### 
 
-using CSV, DataFrames, DelimitedFiles
+using DataFrames, DelimitedFiles
 
 features = readdlm("Data/SECOM/nan_filtered_data.csv", ',', Float64)
 # features = replace(features, NaN => 0)
@@ -158,45 +158,60 @@ labels = Int.(readdlm("Data/SECOM/nan_filtered_labels.csv")[:, 1])
 labels[labels.==-1] .= 0
 labels = Bool.(labels)
 
-total_params = sum(num_params.(dense_layers))
-d1, d2, d3 = unpack_params(randn(total_params), dense_layers)
-nn = Chain([layer(i..., j) for (i, j) in zip([d1, d2, d3], dense_layers)]...)
-forward(rand(376, 100), randn(total_params), dense_layers)
+# total_params = sum(num_params.(dense_layers))
+# d1, d2, d3 = unpack_params(randn(total_params), dense_layers)
+# nn = Chain([layer(i..., j) for (i, j) in zip([d1, d2, d3], dense_layers)]...)
+# forward(rand(376, 100), randn(total_params), dense_layers)
 
-using Turing#, DistributionsAD, AdvancedVI
+using Turing
+# Create a regularization term and a Gaussain prior variance term.
+alpha = 0.09
+sig = sqrt(1.0 / alpha)
+
 
 # Specify the probabilistic model.
 @model function bayes_nn(xs, ys, layers_spec)
     total_num_params = sum(num_params.(layers_spec))
-
-    # Create a regularization term and a Gaussain prior variance term.
-    alpha = 0.09
-    sig = sqrt(1.0 / alpha)
 
     # Create the weight and bias vector.
     nn_params ~ MvNormal(randn(total_num_params), sig .* ones(total_num_params))
     # Calculate predictions for the inputs given the weights
     # and biases in nn_params.
     preds = forward(xs, nn_params, layers_spec)
+    # println(size(preds))
     # Observe each prediction.
     for i = 1:length(ys)
-        println(ys[i], preds[i])
-        ys[i] ~ Bernoulli(preds[i])
+        # println(ys[i], typeof(preds[i]))
+        ys[i] ~ Bernoulli(Turing.ForwardDiff.value(preds[i]))
     end
 end
 
 ###
 ### Perform Inference using VI
 ###
-
 using Turing.Variational
+using AdvancedVI
 
-m = bayes_nn(collect(features'), labels, dense_layers)
+m = bayes_nn(Array(features'), labels, dense_layers)
 q0 = Variational.meanfield(m)
-advi = ADVI(10, 100)
+advi = ADVI(10, 100000)
 opt = Variational.DecayedADAGrad(1e-2, 1.1, 0.9)
 q = vi(m, advi, q0; optimizer = opt)
 AdvancedVI.elbo(advi, q, m, 1000)
+
+using Plots
+
+q_samples = rand(q, 10_000);
+
+p1 = histogram(q_samples[1, :], alpha = 0.7, label = "q");
+
+title!(raw"$\theta_1$")
+
+p2 = histogram(q_samples[2, :], alpha = 0.7, label = "q");
+
+title!(raw"$\theta_2$")
+
+plot(p1, p2)
 
 ###
 ### Perform Inference using MCMC
@@ -207,3 +222,10 @@ AdvancedVI.elbo(advi, q, m, 1000)
 # theta = MCMCChains.group(chain, :nn_params).value
 
 #MCC metric to be used for imbalanced datasets
+
+### 
+### Prediction
+### 
+
+#we sample the params from the learned dist. q()
+# then we feed the avaearged params to the netwrok and we perform predcitions on a test set

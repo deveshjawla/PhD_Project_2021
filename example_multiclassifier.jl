@@ -1,4 +1,4 @@
-using Flux, RDatasets, Measures, StatsPlots, PlotThemes, Turing, ReverseDiff
+using Flux, RDatasets, Turing, Plots
 gr()
 
 iris = dataset("datasets", "iris");
@@ -40,7 +40,8 @@ sigma = sqrt(1.0 / alpha);
     theta ~ MvNormal(zeros(63), sigma .* ones(63))
     preds = feedforward(inp, theta)
     for i = 1:length(lab)
-        lab[i] ~ Categorical(preds[:, i])
+        # println(preds[:, i])
+        lab[i] ~ Categorical(Turing.ForwardDiff.value.(preds[:, i]))
     end
 end
 
@@ -50,8 +51,22 @@ end
 using Turing.Variational
 m = bayesnn(Array(inputs'), labels)
 q0 = Variational.meanfield(m)
-advi = ADVI(10, 100)
+advi = ADVI(10, 100_000)
 opt = Variational.DecayedADAGrad(1e-2, 1.1, 0.9)
 q = vi(m, advi, q0; optimizer = opt)
 using AdvancedVI
 AdvancedVI.elbo(advi, q, m, 1000)
+
+using Plots
+
+q_samples = rand(q, 100_000);
+
+p1 = histogram(q_samples[1, :], alpha = 0.7, label = "q");
+
+title!(raw"$\theta_1$")
+
+p2 = histogram(q_samples[2, :], alpha = 0.7, label = "q");
+
+title!(raw"$\theta_2$")
+
+plot(p1, p2)
