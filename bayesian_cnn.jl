@@ -108,11 +108,10 @@ end
 function unpack_params(nn_params::AbstractVector, layers_spec::AbstractVector)
     num_params_list = num_params.(layers_spec)
     indices_list = split(nn_params, num_params_list)
-
     params_collection = [layer_params(i, j) for (i, j) in zip(indices_list, layers_spec)]
-
     return params_collection
 end
+
 
 
 ###
@@ -138,11 +137,10 @@ end
 ### Dense Network specifications
 ###
 
-dense_layers = [DenseParams(indim = 376, outdim = 4), DenseParams(indim = 4, outdim = 3), DenseParams(indim = 3, outdim = 1, activation_fn = sigmoid)]
+dense_layers = [DenseParams(indim = 376, outdim = 5), DenseParams(indim = 5, outdim = 3), DenseParams(indim = 3, outdim = 1, activation_fn = sigmoid)]
 
-function forward(xs, nn_params::AbstractVector, layers_spec)
-    d1, d2, d3 = unpack_params(nn_params, layers_spec)
-    nn = Chain([layer(i..., j) for (i, j) in zip([d1, d2, d3], layers_spec)]...)
+function forward(xs, nn_params, layers_spec)
+    nn = Chain([layer(i..., j) for (i, j) in zip(nn_params, layers_spec)]...)
     return nn(xs)
 end
 
@@ -155,8 +153,45 @@ using DataFrames, DelimitedFiles
 features = readdlm("Data/SECOM/nan_filtered_data.csv", ',', Float64)
 # features = replace(features, NaN => 0)
 labels = Int.(readdlm("Data/SECOM/nan_filtered_labels.csv")[:, 1])
-labels[labels.==-1] .= 0
-labels = Bool.(labels)
+
+# A handy helper function to rescale our dataset.
+function standardize(x)
+    return (x .- mean(x, dims = 1)) ./ std(x, dims = 1), x
+end
+
+# Another helper function to unstandardize our datasets.
+function unstandardize(x, orig)
+    return (x .+ mean(orig, dims = 1)) .* std(orig, dims = 1)
+end
+
+
+features, _ = standardize(features)
+
+using Random
+data = hcat(features, labels)
+data = data[shuffle(axes(data, 1)), :]
+
+# Function to split samples.
+function split_data(df; at = 0.70)
+    r = size(df, 1)
+    index = Int(round(r * at))
+    train = df[1:index, :]
+    test = df[(index+1):end, :]
+    return train, test
+end
+
+train, test = split_data(data, at = 0.8)
+
+train_x = train[:, 1:end-1]
+train_y = Int.(train[:, end])
+train_y[train_y.==-1] .= 0
+# train_y_onehot = hcat([Flux.onehot(i, [1, 2, 3]) for i in train_y]...)
+# train_data = Iterators.repeated((train_x', train_y_onehot), 128)
+
+test_x = test[:, 1:end-1]
+test_y = Int.(test[:, end])
+test_y[test_y.==-1] .= 0
+
 
 # total_params = sum(num_params.(dense_layers))
 # d1, d2, d3 = unpack_params(randn(total_params), dense_layers)
@@ -164,6 +199,8 @@ labels = Bool.(labels)
 # forward(rand(376, 100), randn(total_params), dense_layers)
 
 using Turing
+using ReverseDiff
+Turing.setadbackend(:reversediff)
 # Create a regularization term and a Gaussain prior variance term.
 alpha = 0.09
 sig = sqrt(1.0 / alpha)
@@ -175,14 +212,16 @@ sig = sqrt(1.0 / alpha)
 
     # Create the weight and bias vector.
     nn_params ~ MvNormal(randn(total_num_params), sig .* ones(total_num_params))
+
+    theta = unpack_params(nn_params, layers_spec)
     # Calculate predictions for the inputs given the weights
-    # and biases in nn_params.
-    preds = forward(xs, nn_params, layers_spec)
+    # and biases in theta.
+    preds = forward(xs, theta, layers_spec)
     # println(size(preds))
     # Observe each prediction.
     for i = 1:length(ys)
         # println(ys[i], typeof(preds[i]))
-        ys[i] ~ Bernoulli(Turing.ForwardDiff.value(preds[i]))
+        ys[i] ~ Bernoulli(preds[i])
     end
 end
 
@@ -190,28 +229,30 @@ end
 ### Perform Inference using VI
 ###
 using Turing.Variational
-using AdvancedVI
 
-m = bayes_nn(Array(features'), labels, dense_layers)
-q0 = Variational.meanfield(m)
-advi = ADVI(10, 100000)
-opt = Variational.DecayedADAGrad(1e-2, 1.1, 0.9)
-q = vi(m, advi, q0; optimizer = opt)
-AdvancedVI.elbo(advi, q, m, 1000)
+m = bayes_nn(train_x', train_y, dense_layers)
+# q0 = Variational.meanfield(m)
+advi = ADVI(10, 10000)
+# opt = Variational.DecayedADAGrad(1e-2, 1.1, 0.9)
+q = vi(m, advi)
 
-using Plots
 
-q_samples = rand(q, 10_000);
+# using AdvancedVI
+# AdvancedVI.elbo(advi, q, m, 1000)
 
-p1 = histogram(q_samples[1, :], alpha = 0.7, label = "q");
+# using Plots
 
-title!(raw"$\theta_1$")
+# q_samples = rand(q, 10_000);
 
-p2 = histogram(q_samples[2, :], alpha = 0.7, label = "q");
+# p1 = histogram(q_samples[1, :], alpha = 0.7, label = "q");
 
-title!(raw"$\theta_2$")
+# title!(raw"$\theta_1$")
 
-plot(p1, p2)
+# p2 = histogram(q_samples[2, :], alpha = 0.7, label = "q");
+
+# title!(raw"$\theta_2$")
+
+# plot(p1, p2)
 
 ###
 ### Perform Inference using MCMC
