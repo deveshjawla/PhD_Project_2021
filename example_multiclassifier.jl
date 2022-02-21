@@ -98,8 +98,8 @@ q = vi(m, advi)
 # params = mean.(eachrow(params_samples))
 # outputs = feedforward(test_x', params)
 
-# using AdvancedVI
-# AdvancedVI.elbo(advi, q, m, 1000)
+using AdvancedVI
+AdvancedVI.elbo(advi, q, m, 1000)
 
 # using Plots
 

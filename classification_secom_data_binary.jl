@@ -31,6 +31,7 @@ postive_data = data[data[:, end].==1.0, :]
 negative_data = data[data[:, end].==-1.0, :]
 data = vcat(postive_data, negative_data[1:100, :])
 data = data[shuffle(axes(data, 1)), :]
+# data = data[1:200, :]
 
 # Function to split samples.
 function split_data(df; at = 0.70)
@@ -56,16 +57,25 @@ test_y[test_y.==-1] .= 0
 test_y = Bool.(test_y)
 # test_y = hcat([Flux.onehot(i, [1, 2]) for i in test_y]...)
 
-
 function weights(θ::AbstractVector)
-    W0 = reshape(θ[1:1500], 10, 150)
-    b0 = θ[1501:1510]
-    W1 = reshape(θ[1511:1560], 5, 10)
-    b1 = θ[1561:1565]
-    W2 = reshape(θ[1566:1570], 1, 5)
-    b2 = θ[1571:1571]
+    W0 = reshape(θ[1:1350], 9, 150)
+    b0 = θ[1351:1359]
+    W1 = reshape(θ[1360:1386], 3, 9)
+    b1 = θ[1387:1389]
+    W2 = reshape(θ[1390:1392], 1, 3)
+    b2 = θ[1393:1393]
     return W0, b0, W1, b1, W2, b2
 end
+
+# function weights(θ::AbstractVector)
+#     W0 = reshape(θ[1:1500], 10, 150)
+#     b0 = θ[1501:1510]
+#     W1 = reshape(θ[1511:1560], 5, 10)
+#     b1 = θ[1561:1565]
+#     W2 = reshape(θ[1566:1570], 1, 5)
+#     b2 = θ[1571:1571]
+#     return W0, b0, W1, b1, W2, b2
+# end
 
 function feedforward(θ::AbstractVector)
     W0, b0, W1, b1, W2, b2 = weights(θ)
@@ -81,7 +91,7 @@ alpha = 0.09
 sigma = sqrt(1.0 / alpha)
 
 @model bayesnn(x, y) = begin
-    θ ~ MvNormal(zeros(1571), sigma .* ones(1571))
+    θ ~ MvNormal(zeros(1393), sigma .* ones(1393))
     nn = feedforward(θ)
     ŷ = nn(x)
     for i = 1:length(y)
@@ -89,23 +99,28 @@ sigma = sqrt(1.0 / alpha)
     end
 end
 
-# chain = sample(bayesnn(Array(train_x'), train_y), NUTS(), 10)
-# θ = MCMCChains.group(chain, :θ).value
+chain = sample(bayesnn(Array(train_x'), train_y), NUTS(), 1000)
+θ = MCMCChains.group(chain, :θ).value
+params = mean.(eachcol(θ[:,:,1]))
 
-m = bayesnn(train_x', train_y')
-# q0 = Variational.meanfield(m) #Shall I use meanfield here? what other initial variational distribution?
-advi = ADVI(40, 1000) #how many iteration? Any automatic convergence criteria?
-# opt = Variational.DecayedADAGrad(0.1, 1.0, 0.9) #Schedule?
-q = vi(m, advi)
+# m = bayesnn(train_x', train_y')
+# # q0 = Variational.meanfield(m) #Shall I use meanfield here? what other initial variational distribution?
+# advi = ADVI(10, 1000) #how many iteration? Any automatic convergence criteria?
+# # opt = Variational.DecayedADAGrad(0.1, 1.0, 0.9) #Schedule?
+# q = vi(m, advi)
 
-params_samples = rand(q, 1000)
-params = mean.(eachrow(params_samples))
+# params_samples = rand(q, 1000)
+# params = mean.(eachrow(params_samples))
 model = feedforward(params)
 ŷ = model(test_x')
-predictions = (ŷ' .> 0.5)
-reall = (test_y)
-count(ŷ .> 0.7)
-count(test_y)
+predictions = (ŷ .> 0.5)
+# count(ŷ .> 0.7)
+# count(test_y)
 
-using AdvancedVI
-AdvancedVI.elbo(advi, q, m, 1000)
+using MLJ
+print("Accuracy:", accuracy(predictions, test_y'))
+print("MCC:", mcc(predictions, test_y'))
+
+
+# using AdvancedVI
+# AdvancedVI.elbo(advi, q, m, 1000)
