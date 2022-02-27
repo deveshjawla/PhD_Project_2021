@@ -1,8 +1,5 @@
 using CSV, DataFrames, DelimitedFiles
 
-features = readdlm("Data/secom_data.txt")
-labels = Int.(readdlm("Data/secom_labels.txt")[:, 1])
-
 # Function to split samples.
 function split_data(df, at = 0.70)
     r = size(df, 1)

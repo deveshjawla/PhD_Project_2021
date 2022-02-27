@@ -1,12 +1,12 @@
+using Statistics, Turing, Plots, DataFrames, DelimitedFiles, ReverseDiff, Printf, BSON
+
 #### 
 #### Network - A customizable chain of parametrized conv layer and dense layers. Does not require manually
 #### calculating the output size of images. Takes as input batches of images with dims WHCN.
 #### Automatically makes the weight matrices which are to be modified by Variational Inference.
 #### 
 
-using Flux, Statistics
-using Printf, BSON
-using Parameters: @with_kw
+using Flux, Parameters:@with_kw
 
 @with_kw struct DenseParams
     indim::Int = 128
@@ -61,6 +61,12 @@ function layer(weight::AbstractArray, bias::AbstractArray, cp::ConvParams)
     end
     return layer
 end
+
+Turing.setadbackend(:reversediff)
+using Turing.Variational
+gr()
+
+
 
 function conv_out_dims(input_dims::Tuple, cp::ConvParams)
     output_dims_conv = (((input_dims[1] - cp.filter_size[1] + 2 * cp.pad) / cp.stride_length) + 1)
@@ -127,21 +133,21 @@ end
 
 # layers_spec = [conv_layers; dense_layers]
 
-# function forward(xs, nn_params::AbstractVector, layers_spec)
+# function forward(x, nn_params::AbstractVector, layers_spec)
 #     c1, c2, c3, d1, d2 = unpack_params(nn_params, layers_spec)
 #     nn = Chain([layer(i..., j) for (i, j) in zip([c1, c2, c3], layers_spec[1:3])]..., Flux.flatten, [layer(i..., j) for (i, j) in zip([d1, d2], layers_spec[4:5])]..., softmax)
-#     return nn(xs)
+#     return nn(x)
 # end
 
 ###
 ### Dense Network specifications
 ###
 
-dense_layers = [DenseParams(indim = 376, outdim = 5), DenseParams(indim = 5, outdim = 3), DenseParams(indim = 3, outdim = 1, activation_fn = sigmoid)]
+dense_layers = [DenseParams(indim = 150, outdim = 5, activation_fn = tanh), DenseParams(indim = 5, outdim = 3, activation_fn = tanh), DenseParams(indim = 3, outdim = 1, activation_fn = sigmoid)]
 
-function forward(xs, nn_params, layers_spec)
+function forward(x, nn_params, layers_spec)
     nn = Chain([layer(i..., j) for (i, j) in zip(nn_params, layers_spec)]...)
-    return nn(xs)
+    return nn(x)
 end
 
 ### 
@@ -164,12 +170,20 @@ function unstandardize(x, orig)
     return (x .+ mean(orig, dims = 1)) .* std(orig, dims = 1)
 end
 
-
 features, _ = standardize(features)
 
+using MultivariateStats
+
+M = fit(PCA, features', maxoutdim = 150)
+features_transformed = MultivariateStats.transform(M, features')
+
 using Random
-data = hcat(features, labels)
+data = hcat(features_transformed', labels)
+postive_data = data[data[:, end].==1.0, :]
+negative_data = data[data[:, end].==-1.0, :]
+data = vcat(postive_data, negative_data[1:100, :])
 data = data[shuffle(axes(data, 1)), :]
+# data = data[1:200, :]
 
 # Function to split samples.
 function split_data(df; at = 0.70)
@@ -180,59 +194,57 @@ function split_data(df; at = 0.70)
     return train, test
 end
 
-train, test = split_data(data, at = 0.8)
+train, test = split_data(data, at = 0.9)
 
 train_x = train[:, 1:end-1]
 train_y = Int.(train[:, end])
 train_y[train_y.==-1] .= 0
-# train_y_onehot = hcat([Flux.onehot(i, [1, 2, 3]) for i in train_y]...)
+train_y = Bool.(train_y)
+# train_y = hcat([Flux.onehot(i, [1, 2]) for i in train_y]...)
 # train_data = Iterators.repeated((train_x', train_y_onehot), 128)
 
 test_x = test[:, 1:end-1]
 test_y = Int.(test[:, end])
 test_y[test_y.==-1] .= 0
-
+test_y = Bool.(test_y)
+# test_y = hcat([Flux.onehot(i, [1, 2]) for i in test_y]...)
 
 # total_params = sum(num_params.(dense_layers))
 # d1, d2, d3 = unpack_params(randn(total_params), dense_layers)
 # nn = Chain([layer(i..., j) for (i, j) in zip([d1, d2, d3], dense_layers)]...)
 # forward(rand(376, 100), randn(total_params), dense_layers)
 
-using Turing
-using ReverseDiff
-Turing.setadbackend(:reversediff)
 # Create a regularization term and a Gaussain prior variance term.
 alpha = 0.09
 sig = sqrt(1.0 / alpha)
 
 
 # Specify the probabilistic model.
-@model function bayes_nn(xs, ys, layers_spec)
+@model function bayes_nn(x, y, layers_spec)
     total_num_params = sum(num_params.(layers_spec))
 
     # Create the weight and bias vector.
     nn_params ~ MvNormal(randn(total_num_params), sig .* ones(total_num_params))
 
-    theta = unpack_params(nn_params, layers_spec)
+    θ = unpack_params(nn_params, layers_spec)
     # Calculate predictions for the inputs given the weights
-    # and biases in theta.
-    preds = forward(xs, theta, layers_spec)
-    # println(size(preds))
+    # and biases in θ.
+    ŷ = forward(x, θ, layers_spec)
+    # println(size(ŷ))
     # Observe each prediction.
-    for i = 1:length(ys)
-        # println(ys[i], typeof(preds[i]))
-        ys[i] ~ Bernoulli(preds[i])
+    for i = 1:length(y)
+        # println(y[i], typeof(ŷ[i]))
+        y[i] ~ Bernoulli(ŷ[i])
     end
 end
 
 ###
 ### Perform Inference using VI
 ###
-using Turing.Variational
 
-m = bayes_nn(train_x', train_y, dense_layers)
+m = bayes_nn(train_x', train_y', dense_layers)
 # q0 = Variational.meanfield(m)
-advi = ADVI(10, 10000)
+advi = ADVI(10, 1000)
 # opt = Variational.DecayedADAGrad(1e-2, 1.1, 0.9)
 q = vi(m, advi)
 
@@ -240,17 +252,29 @@ q = vi(m, advi)
 # using AdvancedVI
 # AdvancedVI.elbo(advi, q, m, 1000)
 
+# params_samples = rand(q, 1000)
+# params = mean.(eachrow(params_samples))
+model = feedforward(params)
+ŷ = model(test_x')
+predictions = (ŷ .> 0.5)
+# count(ŷ .> 0.7)
+# count(test_y)
+
+using MLJ
+print("Accuracy:", accuracy(predictions, test_y'))
+print("MCC:", mcc(predictions, test_y'))
+
 # using Plots
 
 # q_samples = rand(q, 10_000);
 
 # p1 = histogram(q_samples[1, :], alpha = 0.7, label = "q");
 
-# title!(raw"$\theta_1$")
+# title!(raw"$\θ_1$")
 
 # p2 = histogram(q_samples[2, :], alpha = 0.7, label = "q");
 
-# title!(raw"$\theta_2$")
+# title!(raw"$\θ_2$")
 
 # plot(p1, p2)
 
@@ -260,7 +284,7 @@ q = vi(m, advi)
 
 # chain = sample(bayes_nn(collect(features'), labels, dense_layers), NUTS(), 10)
 # # Extract all weight and bias parameters.
-# theta = MCMCChains.group(chain, :nn_params).value
+# θ = MCMCChains.group(chain, :nn_params).value
 
 #MCC metric to be used for imbalanced datasets
 
