@@ -1,6 +1,9 @@
 #Data
 *.data
 *.names
+*.csv
+*.pdf
+*.tar
 
 #Storage
 *.bin

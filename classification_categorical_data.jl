@@ -1,8 +1,8 @@
-using Flux, RDatasets, Turing, Plots, DataFrames, DelimitedFiles
-using ReverseDiff
-Turing.setadbackend(:reversediff)
-using Turing.Variational
-gr()
+### 
+### Data
+### 
+
+using DataFrames, DelimitedFiles
 
 features = readdlm("Data/SECOM/nan_filtered_data.csv", ',', Float64)
 # features = replace(features, NaN => 0)
@@ -48,27 +48,45 @@ test_y[test_y.==-1] .= 2
 # test_y = Bool.(test_y)
 # test_y = hcat([Flux.onehot(i, [1, 2]) for i in test_y]...)
 
+###
+### Conv Network specifications
+###
 
-function weights(theta::AbstractVector)
-    W0 = reshape(theta[1:20], 5, 4)
-    b0 = theta[21:25]
-    W1 = reshape(theta[26:40], 3, 5)
-    b1 = theta[41:43]
-    W2 = reshape(theta[44:49], 2, 3)
-    b2 = theta[50:51]
-    return W0, b0, W1, b1, W2, b2
-end
+using Flux
 
-function feedforward(theta::AbstractVector)
-    W0, b0, W1, b1, W2, b2 = weights(theta)
+function nn(theta::AbstractVector)
+    W0 = reshape(theta[1:25], 5, 5, 1, 1) # Conv((5, 5), 1=>1, relu)
+    b0 = theta[26:26]
+    W1 = reshape(theta[27:35], 3, 3, 1, 1) # Conv((3, 3), 1=>1, relu)
+    b1 = theta[36:36]
+    W2 = reshape(theta[37:45], 3, 3, 1, 1) # Conv((3, 3), 1=>1, relu)
+    b2 = theta[46:46]
+
+    W3 = reshape(theta[1:25], 9, 128)
+    b3 = theta[46:46]
+    W4 = reshape(theta[1:25], 3, 9)
+    b4 = theta[46:46]
+    W5 = reshape(theta[1:25], 1, 3)
+    b5 = theta[46:46]
+	
     model = Chain(
-        Dense(W0, b0, tanh),
-        Dense(W1, b1, tanh),
-        Dense(W2, b2, relu),
-        softmax
+        Conv(W0, b0, relu),
+        Conv(W1, b1, relu),
+        Conv(W2, b2, relu),
+        flatten, # for a defined input image size, we can calculate the flattened size
+        Dense(W3, b3, tanh),
+        Dense(W4, b4, tanh),
+        Dense(W5, b5, sigmoid) # for binary classification
     )
     return model
 end
+
+###
+### Bayesian Network specifications
+###
+
+using ReverseDiff, Turing
+Turing.setadbackend(:reversediff)
 
 alpha = 0.09
 sigma = sqrt(1.0 / alpha)
@@ -78,12 +96,18 @@ sigma = sqrt(1.0 / alpha)
     model = feedforward(theta)
     preds = model(inp)
     for i = 1:length(lab)
-        lab[i] ~ Categorical(preds[:,i])
+        lab[i] ~ Categorical(preds[:, i])
     end
 end
 
+###
+### Inference
+###
+
 # chain = sample(bayesnn(Array(train_x'), train_y), NUTS(), 10)
 # theta = MCMCChains.group(chain, :theta).value
+
+using Turing.Variational
 
 m = bayesnn(train_x', train_y)
 # q0 = Variational.meanfield(m) #Shall I use meanfield here? what other initial variational distribution?
@@ -94,3 +118,6 @@ q = vi(m, advi)
 # params_samples = rand(q, 1000)
 # params = mean.(eachrow(params_samples))
 # outputs = feedforward(test_x', params)
+
+# using Plots
+# gr()
