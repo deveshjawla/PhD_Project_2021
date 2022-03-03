@@ -1,8 +1,8 @@
-using Flux, RDatasets, Turing, Plots, DataFrames, DelimitedFiles
-using ReverseDiff
-Turing.setadbackend(:reversediff)
-using Turing.Variational
-gr()
+### 
+### Data
+### 
+
+using DataFrames, DelimitedFiles, Statistics
 
 features = readdlm("Data/SECOM/nan_filtered_data.csv", ',', Float64)
 # features = replace(features, NaN => 0)
@@ -10,28 +10,13 @@ labels = Int.(readdlm("Data/SECOM/nan_filtered_labels.csv")[:, 1])
 
 # A handy helper function to rescale our dataset.
 function standardize(x)
-    return (x .- mean(x, dims = 1)) ./ std(x, dims = 1), x
+    return (x .- mean(x, dims = 1)) ./ (std(x, dims = 1) .+ 0.000001), x
 end
 
 # Another helper function to unstandardize our datasets.
 function unstandardize(x, orig)
     return (x .+ mean(orig, dims = 1)) .* std(orig, dims = 1)
 end
-
-features, _ = standardize(features)
-
-using MultivariateStats
-
-M = fit(PCA, features', maxoutdim = 150)
-features_transformed = MultivariateStats.transform(M, features')
-
-using Random
-data = hcat(features_transformed', labels)
-postive_data = data[data[:, end].==1.0, :]
-negative_data = data[data[:, end].==-1.0, :]
-data = vcat(postive_data, negative_data[1:100, :])
-data = data[shuffle(axes(data, 1)), :]
-# data = data[1:200, :]
 
 # Function to split samples.
 function split_data(df; at = 0.70)
@@ -42,7 +27,11 @@ function split_data(df; at = 0.70)
     return train, test
 end
 
-train, test = split_data(data, at = 0.9)
+
+using Random
+data = hcat(features, labels)
+data = data[shuffle(axes(data, 1)), :]
+train, test = split_data(data, at = 0.8)
 
 train_x = train[:, 1:end-1]
 train_y = Int.(train[:, end])
@@ -56,6 +45,40 @@ test_y = Int.(test[:, end])
 test_y[test_y.==-1] .= 0
 test_y = Bool.(test_y)
 # test_y = hcat([Flux.onehot(i, [1, 2]) for i in test_y]...)
+
+train_x, _ = standardize(train_x)
+test_x, _ = standardize(test_x)
+
+using MultivariateStats
+
+M = fit(PCA, train_x', maxoutdim = 150)
+train_x_transformed = MultivariateStats.transform(M, train_x')
+
+M = fit(PCA, test_x', maxoutdim = 150)
+test_x_transformed = MultivariateStats.transform(M, test_x')
+
+train_x = train_x_transformed'
+test_x = test_x_transformed'
+
+train = hcat(train_x, train_y)
+
+postive_data = train[train[:, end].==1.0, :]
+negative_data = train[train[:, end].==0.0, :]
+train = vcat(postive_data, negative_data[1:88, :])
+# data = data[1:200, :]
+train = train[shuffle(axes(train, 1)), :]
+
+
+train_x = train[:, 1:end-1]
+train_y = Int.(train[:, end])
+train_y[train_y.==-1] .= 0
+train_y = Bool.(train_y)
+
+###
+### Dense Network specifications
+###
+
+using Flux
 
 function weights(θ::AbstractVector)
     W0 = reshape(θ[1:1350], 9, 150)
@@ -87,6 +110,13 @@ function feedforward(θ::AbstractVector)
     return model
 end
 
+###
+### Bayesian Network specifications
+###
+
+using ReverseDiff, Turing
+Turing.setadbackend(:reversediff)
+
 alpha = 0.09
 sigma = sqrt(1.0 / alpha)
 
@@ -99,9 +129,15 @@ sigma = sqrt(1.0 / alpha)
     end
 end
 
+###
+### Inference
+###
+
 chain = sample(bayesnn(Array(train_x'), train_y), NUTS(), 1000)
 θ = MCMCChains.group(chain, :θ).value
-params = mean.(eachcol(θ[:,:,1]))
+params = mean.(eachcol(θ[:, :, 1]))
+
+# using Turing.Variational
 
 # m = bayesnn(train_x', train_y')
 # # q0 = Variational.meanfield(m) #Shall I use meanfield here? what other initial variational distribution?
