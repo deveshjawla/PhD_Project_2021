@@ -65,14 +65,14 @@ test_y = Bool.(test_y)
 
 using MultivariateStats
 
-# M = fit(PCA, train_x', maxoutdim = 150)
-# train_x_transformed = MultivariateStats.transform(M, train_x')
+M = fit(PCA, train_x', maxoutdim = 150)
+train_x_transformed = MultivariateStats.transform(M, train_x')
 
 # M = fit(PCA, test_x', maxoutdim = 150)
-# test_x_transformed = MultivariateStats.transform(M, test_x')
+test_x_transformed = MultivariateStats.transform(M, test_x')
 
-# train_x = train_x_transformed'
-# test_x = test_x_transformed'
+train_x = Matrix(train_x_transformed')
+test_x = Matrix(test_x_transformed')
 
 train = hcat(train_x, train_y)
 
