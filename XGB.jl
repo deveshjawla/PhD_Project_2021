@@ -31,14 +31,11 @@ function split_data(df; at = 0.70)
 end
 
 
-using Random
+using Random, MLJ
 data = hcat(features, labels)
-# data = data[shuffle(axes(data, 1)), :]
-# train, test = split_data(data, at = 0.7)
-ind_train,ind_test= partition(eachindex(data[:,1]), 0.8, stratify=data[:,end],  shuffle=true, rng=12344)
+data = data[shuffle(axes(data, 1)), :]
+train, test = split_data(data, at = 0.7)
 
-train = data[ind_train, :]
-test = data[ind_test, :]
 
 sum([i>0.5 for i in train[:,end]])
 sum([i<0.5 for i in train[:,end]])
@@ -63,23 +60,23 @@ test_y = Bool.(test_y)
 # train_x, _ = standardize(train_x)
 # test_x, _ = standardize(test_x)
 
-using MultivariateStats
+# using MultivariateStats
 
-M = fit(PCA, train_x', maxoutdim = 150)
-train_x_transformed = MultivariateStats.transform(M, train_x')
+# M = fit(PCA, train_x', maxoutdim = 150)
+# train_x_transformed = MultivariateStats.transform(M, train_x')
 
-# M = fit(PCA, test_x', maxoutdim = 150)
-test_x_transformed = MultivariateStats.transform(M, test_x')
+# # M = fit(PCA, test_x', maxoutdim = 150)
+# test_x_transformed = MultivariateStats.transform(M, test_x')
 
-train_x = Matrix(train_x_transformed')
-test_x = Matrix(test_x_transformed')
+# train_x = Matrix(train_x_transformed')
+# test_x = Matrix(test_x_transformed')
 
 train = hcat(train_x, train_y)
 
 postive_data = train[train[:, end].==1.0, :]
 negative_data = train[train[:, end].==0.0, :]
-# train = vcat(postive_data, negative_data[1:88, :])
-# data = data[1:200, :]
+train = vcat(postive_data, negative_data[1:88, :])
+data = data[1:200, :]
 train = train[shuffle(axes(train, 1)), :]
 
 
