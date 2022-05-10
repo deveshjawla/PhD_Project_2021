@@ -4,6 +4,7 @@
 *.csv
 *.pdf
 *.tar
+*.txt
 
 #Storage
 *.bin
