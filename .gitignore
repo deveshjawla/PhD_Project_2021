@@ -5,6 +5,7 @@
 *.pdf
 *.tar
 *.txt
+/Data
 
 #Storage
 *.bin
